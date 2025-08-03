@@ -56,8 +56,10 @@ async def scrape_target_channels():
                     print(f"در حال بررسی کانال: {chat_username} (ID: {chat.id})")
 
                     # دریافت فقط 50 پیام آخر
-                    messages = await pyrogram_client.get_chat_history(chat.id, limit=50)
-                    messages_list = [msg async for msg in messages]
+                    messages = pyrogram_client.get_chat_history(chat.id, limit=50)
+                    messages_list = []
+                    async for msg in messages:
+                        messages_list.append(msg)
                     logger.info(f"تعداد پیام‌های دریافت‌شده از {chat_username}: {len(messages_list)}")
                     print(f"تعداد پیام‌های دریافت‌شده از {chat_username}: {len(messages_list)}")
 
