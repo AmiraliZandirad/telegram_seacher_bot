@@ -4,18 +4,14 @@ from pyrogram import Client
 from pyrogram.errors import FloodWait, PeerIdInvalid
 from telegram.ext import Updater, MessageHandler, Filters
 
-# اطلاعات Pyrogram
 api_id = 25517812
 api_hash = "1651908df3a7fb05ba65905ae0d32bc0"
 session_name = "car_user"
-
-# توکن ربات
 bot_token = "8242002160:AAGDtD14wUI4EajkKnBDixqnUwDQXAhBtKE"
 
-# تابع جستجو
 async def search_car_price(query: str):
     results = []
-    # no_updates=True تا آپدیت‌های خودکار را نگیریم
+    # مهم: no_updates=True باعث می‌شود آپدیت‌ها نگیریم و خطا ندهد
     async with Client(session_name, api_id=api_id, api_hash=api_hash, no_updates=True) as app:
         async for dialog in app.get_dialogs():
             if dialog.chat.type == "channel":
@@ -39,7 +35,6 @@ async def search_car_price(query: str):
     else:
         return "❗ هیچ نتیجه‌ای پیدا نشد."
 
-# هندلر ربات
 def handle_message(update, context):
     query = update.message.text
     loop = asyncio.new_event_loop()
@@ -47,9 +42,7 @@ def handle_message(update, context):
     result = loop.run_until_complete(search_car_price(query))
     update.message.reply_text(result)
 
-# اجرای ربات با python-telegram-bot v13
 def main():
-    # از نسخه 13 استفاده می‌کنیم
     updater = Updater(token=bot_token, use_context=True)
     dp = updater.dispatcher
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
