@@ -4,6 +4,7 @@ import sqlite3
 from pyrogram import Client
 from telegram.ext import Application, MessageHandler, filters, CommandHandler
 import logging
+from pyrogram.errors import FloodWait
 
 # تنظیمات لاگ‌گیری
 logging.basicConfig(
@@ -19,6 +20,17 @@ API_ID = 25517812
 API_HASH = "1651908df3a7fb05ba65905ae0d32bc0"
 SESSION_NAME = "car_user"
 
+# لیست کانال‌های مشخص‌شده
+TARGET_CHANNELS = [
+    "@ArefzadehSales",
+    "@bolvar_danesh_amoz",
+    "@autobarbodgrop",
+    "@car_ayral",
+    "@autojaloulimohammad",
+    "@khanehyma",
+    "@otogaleryqasemi"
+]
+
 PRODUCTS = {}  # دیکشنری برای ذخیره محصولات و قیمت‌ها
 
 # اتصال به پایگاه داده SQLite
@@ -31,73 +43,76 @@ conn.commit()
 # مقداردهی اولیه کلاینت Pyrogram
 pyrogram_client = Client(SESSION_NAME, api_id=API_ID, api_hash=API_HASH, workdir=".")
 
-# تابع برای بررسی 50 پیام آخر هر کانال
-async def scrape_all_channels():
+# تابع برای بررسی 50 پیام آخر کانال‌های مشخص‌شده
+async def scrape_target_channels():
     async with pyrogram_client:
         try:
-            logger.info("شروع بررسی کانال‌ها")
-            print("شروع بررسی کانال‌ها")
-            async for dialog in pyrogram_client.get_dialogs():
-                chat = dialog.chat
-                if chat.type in ["channel", "supergroup"]:
+            logger.info("شروع بررسی کانال‌های مشخص‌شده")
+            print("شروع بررسی کانال‌های مشخص‌شده")
+            for channel in TARGET_CHANNELS:
+                try:
+                    # دریافت اطلاعات کانال
+                    chat = await pyrogram_client.get_chat(channel)
                     chat_username = chat.username if chat.username else chat.title
                     logger.info(f"در حال بررسی کانال: {chat_username} (ID: {chat.id})")
                     print(f"در حال بررسی کانال: {chat_username} (ID: {chat.id})")
-                    try:
-                        # نادیده گرفتن کانال‌های نامعتبر
-                        invalid_peers = ["-1002382374054", "-1002215290062"]
-                        if str(chat.id) in invalid_peers:
-                            logger.warning(f"نادیده گرفتن کانال نامعتبر: {chat_username}")
-                            print(f"نادیده گرفتن کانال نامعتبر: {chat_username}")
-                            continue
 
-                        # دریافت فقط 50 پیام آخر
-                        messages = await pyrogram_client.get_chat_history(chat.id, limit=50)
-                        messages_list = [msg async for msg in messages]
-                        logger.info(f"تعداد پیام‌های دریافت‌شده از {chat_username}: {len(messages_list)}")
-                        print(f"تعداد پیام‌های دریافت‌شده از {chat_username}: {len(messages_list)}")
+                    # دریافت فقط 50 پیام آخر
+                    messages = await pyrogram_client.get_chat_history(chat.id, limit=50)
+                    messages_list = [msg async for msg in messages]
+                    logger.info(f"تعداد پیام‌های دریافت‌شده از {chat_username}: {len(messages_list)}")
+                    print(f"تعداد پیام‌های دریافت‌شده از {chat_username}: {len(messages_list)}")
 
-                        for message in messages_list:
-                            if message.text:
-                                logger.debug(f"پیام در {chat_username}: {message.text[:200]}...")
-                                print(f"پیام در {chat_username}: {message.text[:200]}...")
-                                # الگوهای regex برای فرمت پیام‌های نمونه
-                                patterns = [
-                                    r"(.*?)\n.*?مدل\s*(\d{4}|۱\d{3}).*?\n(?:قیمت|فی)[:\s]*(\d+[.,/]?[\d]*)[\s]*(?:تومان)?\n.*?(?:\n(\d{10,11}))?(?:.*?\n(\d{10,11}))?(?:\n(.*))?",
-                                    r"(.*?)\s*(?:مدل|سال)\s*(\d{4}|۱\d{3})?\s*(?:قیمت|فی)[:\s]*(\d+[.,/]?[\d]*)[\s]*(?:تومان)?\s*(?:تماس|شماره)?\s*(\d{10,11})?\s*(.*)?",
-                                ]
-                                product_name = None
-                                price = None
-                                contact = None
-                                seller = None
-                                model_year = None
-                                details = None
-                                for pattern in patterns:
-                                    match = re.search(pattern, message.text, re.IGNORECASE | re.MULTILINE)
-                                    if match:
-                                        product_name = match.group(1).strip().lower()
-                                        price_str = match.group(3).replace(",", "").replace(".", "").replace("/", "")
-                                        price = int(price_str) * (1000000 if len(price_str) <= 4 else 1)
-                                        model_year = match.group(2) if match.group(2) else "نامشخص"
-                                        contact = ", ".join(filter(None, [match.group(4), match.group(5)])) if match.group(4) or match.group(5) else ""
-                                        seller = match.group(6).strip() if match.group(6) else "نامشخص"
-                                        details = message.text
-                                        logger.info(f"استخراج: {product_name}, {price:,} تومان, مدل: {model_year}, تماس: {contact}, فروشنده: {seller}")
-                                        print(f"استخراج: {product_name}, {price:,} تومان, مدل: {model_year}, تماس: {contact}, فروشنده: {seller}")
-                                        break
+                    for message in messages_list:
+                        if message.text:
+                            logger.debug(f"پیام در {chat_username}: {message.text[:200]}...")
+                            # الگوهای regex برای فرمت‌های مختلف
+                            patterns = [
+                                # فرمت پیام‌های نمونه (مثل دفتر فروش عارف زاده)
+                                r"(.*?)\n.*?مدل\s*(\d{4}|۱\d{3}).*?\n(?:قیمت|فی)[:\s]*(\d+[.,/]?[\d]*)[\s]*(?:تومان)?\n.*?(?:\n(\d{10,11}))?(?:.*?\n(\d{10,11}))?(?:\n(.*))?",
+                                # فرمت عمومی‌تر
+                                r"(.*?)\s*(?:مدل|سال)\s*(\d{4}|۱\d{3})?\s*(?:قیمت|فی)[:\s]*(\d+[.,/]?[\d]*)[\s]*(?:تومان)?\s*(?:تماس|شماره)?\s*(\d{10,11})?\s*(.*)?",
+                                # فرمت ساده بدون مدل
+                                r"(.*?)\s*(?:قیمت|فی)[:\s]*(\d+[.,/]?[\d]*)[\s]*(?:تومان)?\s*(?:تماس|شماره)?\s*(\d{10,11})?\s*(.*)?",
+                            ]
+                            product_name = None
+                            price = None
+                            contact = None
+                            seller = None
+                            model_year = None
+                            details = None
+                            for pattern in patterns:
+                                match = re.search(pattern, message.text, re.IGNORECASE | re.MULTILINE)
+                                if match:
+                                    product_name = match.group(1).strip().lower()
+                                    price_str = match.group(2 if pattern == patterns[2] else 3).replace(",", "").replace(".", "").replace("/", "")
+                                    price = int(price_str) * (1000000 if len(price_str) <= 4 else 1)
+                                    model_year = match.group(2) if match.group(2) else "نامشخص"
+                                    contact = ", ".join(filter(None, [match.group(3 if pattern == patterns[2] else 4), match.group(5)])) if match.group(3 if pattern == patterns[2] else 4) or match.group(5) else ""
+                                    seller = match.group(4 if pattern == patterns[2] else 6).strip() if match.group(4 if pattern == patterns[2] else 6) else "نامشخص"
+                                    details = message.text
+                                    logger.info(f"استخراج: {product_name}, {price:,} تومان, مدل: {model_year}, تماس: {contact}, فروشنده: {seller}")
+                                    print(f"استخراج: {product_name}, {price:,} تومان, مدل: {model_year}, تماس: {contact}, فروشنده: {seller}")
+                                    break
 
-                                if product_name and price:
-                                    contacts = re.findall(r"\d{10,11}", message.text)
-                                    contact = ", ".join(contacts) if contacts else ""
-                                    PRODUCTS[product_name] = PRODUCTS.get(product_name, []) + [(price, chat_username, contact, seller, model_year, details)]
-                                    c.execute("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)",
-                                              (product_name, price, chat_username, contact, seller, model_year, details))
-                                    conn.commit()
+                            if product_name and price:
+                                contacts = re.findall(r"\d{10,11}", message.text)
+                                contact = ", ".join(contacts) if contacts else ""
+                                PRODUCTS[product_name] = PRODUCTS.get(product_name, []) + [(price, chat_username, contact, seller, model_year, details)]
+                                c.execute("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                          (product_name, price, chat_username, contact, seller, model_year, details))
+                                conn.commit()
 
-                    except Exception as e:
-                        logger.error(f"خطا در بررسی کانال {chat_username}: {e}")
-                        print(f"خطا در بررسی کانال {chat_username}: {e}")
-                        continue
+                    await asyncio.sleep(1)  # تأخیر برای جلوگیری از FloodWait
+
+                except FloodWait as e:
+                    logger.warning(f"محدودیت API در کانال {channel}: منتظر {e.value} ثانیه")
+                    print(f"محدودیت API در کانال {channel}: منتظر {e.value} ثانیه")
+                    await asyncio.sleep(e.value)
+                except Exception as e:
+                    logger.error(f"خطا در بررسی کانال {channel}: {e}")
+                    print(f"خطا در بررسی کانال {channel}: {e}")
+                    continue
         except Exception as e:
             logger.error(f"خطا در گرفتن چت‌ها: {e}")
             print(f"خطا در گرفتن چت‌ها: {e}")
@@ -172,8 +187,8 @@ async def main():
             PRODUCTS.clear()
             c.execute("DELETE FROM products")
             conn.commit()
-            await scrape_all_channels()
-            await asyncio.sleep(3600)  # به‌روزرسانی هر ساعت
+            await scrape_target_channels()
+            await asyncio.sleep(600)  # به‌روزرسانی هر 10 دقیقه
             logger.info("به‌روزرسانی دوره‌ای انجام شد.")
             print("به‌روزرسانی دوره‌ای انجام شد.")
     except KeyboardInterrupt:
