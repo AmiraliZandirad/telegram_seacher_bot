@@ -13,9 +13,10 @@ session_name = "car_user"
 bot_token = "8242002160:AAGDtD14wUI4EajkKnBDixqnUwDQXAhBtKE"
 
 # تابع جستجو
-async def search_car_price(query):
+async def search_car_price(query: str):
     results = []
-    async with Client(session_name, api_id=api_id, api_hash=api_hash) as app:
+    # no_updates=True تا آپدیت‌های خودکار را نگیریم
+    async with Client(session_name, api_id=api_id, api_hash=api_hash, no_updates=True) as app:
         async for dialog in app.get_dialogs():
             if dialog.chat.type == "channel":
                 username = dialog.chat.username
@@ -24,9 +25,9 @@ async def search_car_price(query):
                 try:
                     async for msg in app.search_messages(username, query, limit=10):
                         if msg.text:
-                            price_match = re.search(r'\d[\d,.]*', msg.text.replace(',', ''))
-                            if price_match:
-                                price = int(price_match.group().replace('.', '').replace(',', ''))
+                            m = re.search(r'\d[\d,.]*', msg.text.replace(',', ''))
+                            if m:
+                                price = int(m.group().replace('.', '').replace(',', ''))
                                 results.append((price, msg.text[:100], username, msg.message_id))
                 except (PeerIdInvalid, FloodWait):
                     continue
@@ -34,7 +35,7 @@ async def search_car_price(query):
     if results:
         results.sort(key=lambda x: x[0])
         price, text, channel, msg_id = results[0]
-        return f"💰 کمترین قیمت: {price} تومان\n📄 متن: {text}\n🔗 لینک: https://t.me/{channel}/{msg_id}"
+        return f"💰 کمترین قیمت: {price} تومان\n📄 متن: {text}\n🔗 https://t.me/{channel}/{msg_id}"
     else:
         return "❗ هیچ نتیجه‌ای پیدا نشد."
 
@@ -46,8 +47,9 @@ def handle_message(update, context):
     result = loop.run_until_complete(search_car_price(query))
     update.message.reply_text(result)
 
-# اجرای ربات
+# اجرای ربات با python-telegram-bot v13
 def main():
+    # از نسخه 13 استفاده می‌کنیم
     updater = Updater(token=bot_token, use_context=True)
     dp = updater.dispatcher
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
