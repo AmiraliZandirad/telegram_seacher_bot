@@ -61,7 +61,7 @@ async def handle_message(client, message):
 async def main():
     app = Client(session_name, api_id=api_id, api_hash=api_hash, bot_token=bot_token)
     await app.start()
-    app.add_handler(MessageHandler(handle_message, filters.text & ~filters.command()))
+    app.add_handler(MessageHandler(handle_message, filters.text & ~filters.command))
     print("✅ ربات با موفقیت اجرا شد.")
     await app.idle()
 
