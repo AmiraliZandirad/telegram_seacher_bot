@@ -1,55 +1,65 @@
 import asyncio
 import re
-import requests
+import sqlite3
 from pyrogram import Client
-from telegram.ext import Application, MessageHandler, filters
+from telegram.ext import Application, MessageHandler, filters, CommandHandler
+import logging
+
+# تنظیمات لاگ‌گیری
+logging.basicConfig(
+    filename='bot.log',
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # تنظیمات
 BOT_TOKEN = "8242002160:AAGDtD14wUI4EajkKnBDixqnUwDQXAhBtKE"
 API_ID = 25517812
 API_HASH = "1651908df3a7fb05ba65905ae0d32bc0"
 SESSION_NAME = "car_user"
-AI_API_URL = "https://api.avalai.ir/v1/"
-AI_API_TOKEN = "aa-i65SVPZOrRHLjqR8RhXVRiAu61KD7rbgONplPMxem76igylU"
 
 PRODUCTS = {}  # دیکشنری برای ذخیره محصولات و قیمت‌ها
 
+# اتصال به پایگاه داده SQLite
+conn = sqlite3.connect('products.db')
+c = conn.cursor()
+c.execute('''CREATE TABLE IF NOT EXISTS products
+             (name TEXT, price INTEGER, channel TEXT, contact TEXT, seller TEXT, model_year TEXT, details TEXT)''')
+conn.commit()
+
 # مقداردهی اولیه کلاینت Pyrogram
 pyrogram_client = Client(SESSION_NAME, api_id=API_ID, api_hash=API_HASH)
-
-# تابع برای فراخوانی API خارجی (AvalAI)
-def call_ai_api(message_text):
-    try:
-        headers = {"Authorization": f"Bearer {AI_API_TOKEN}"}
-        payload = {"text": message_text}
-        response = requests.post(AI_API_URL, json=payload, headers=headers, timeout=10)
-        response.raise_for_status()
-        return response.json()  # فرض می‌کنیم API پاسخ JSON برمی‌گرداند
-    except Exception as e:
-        print(f"خطا در فراخوانی API: {e}")
-        return None
 
 # تابع برای بررسی تمام پیام‌های تمام کانال‌ها
 async def scrape_all_channels():
     async with pyrogram_client:
         try:
-            # گرفتن تمام چت‌ها (کانال‌ها، گروه‌ها، و غیره)
+            logger.info("شروع بررسی کانال‌ها")
+            print("شروع بررسی کانال‌ها")
             async for dialog in pyrogram_client.get_dialogs():
                 chat = dialog.chat
-                # فقط کانال‌ها و سوپردگروه‌ها را بررسی می‌کنیم
                 if chat.type in ["channel", "supergroup"]:
                     chat_username = chat.username if chat.username else chat.title
+                    logger.info(f"در حال بررسی کانال: {chat_username} (ID: {chat.id})")
                     print(f"در حال بررسی کانال: {chat_username} (ID: {chat.id})")
                     try:
-                        # گرفتن تعداد کل پیام‌ها
+                        # نادیده گرفتن کانال‌های نامعتبر
+                        invalid_peers = ["-1002382374054", "-1002215290062"]
+                        if str(chat.id) in invalid_peers:
+                            logger.warning(f"نادیده گرفتن کانال نامعتبر: {chat_username}")
+                            print(f"نادیده گرفتن کانال نامعتبر: {chat_username}")
+                            continue
+
                         chat_info = await pyrogram_client.get_chat(chat.id)
                         total_messages = chat_info.messages_count if hasattr(chat_info, 'messages_count') else 1000
+                        logger.info(f"تعداد پیام‌ها در {chat_username}: {total_messages}")
+                        print(f"تعداد پیام‌ها در {chat_username}: {total_messages}")
                         offset_id = 0
-                        batch_size = 100  # تعداد پیام‌ها در هر درخواست
+                        batch_size = 100
 
                         while True:
                             try:
-                                # گرفتن پیام‌ها به‌صورت دسته‌ای
                                 messages = await pyrogram_client.get_chat_history(
                                     chat.id, 
                                     limit=batch_size, 
@@ -57,58 +67,107 @@ async def scrape_all_channels():
                                 )
                                 messages_list = [msg async for msg in messages]
                                 if not messages_list:
-                                    break  # اگر پیام بیشتری نبود، حلقه را بشکن
+                                    break
 
                                 for message in messages_list:
                                     if message.text:
-                                        # فراخوانی API برای پردازش پیام (اختیاری)
-                                        ai_response = call_ai_api(message.text)
-                                        if ai_response and "product" in ai_response and "price" in ai_response:
-                                            product_name = ai_response["product"].strip().lower()
-                                            price = int(ai_response["price"])
-                                        else:
-                                            # اگر API پاسخ نداد، از regex استفاده کن
-                                            match = re.search(r"Product: (.*?),\s*Price: \$(\d+)", message.text, re.IGNORECASE)
+                                        logger.debug(f"پیام در {chat_username}: {message.text[:200]}...")
+                                        print(f"پیام در {chat_username}: {message.text[:200]}...")
+                                        # الگوهای regex برای استخراج خودرو، قیمت، تماس، فروشنده، مدل، و جزئیات
+                                        patterns = [
+                                            # فرمت چندخطی مثل: سورن موتور پارس سفید سیمی\nخشک برج روز\nفی: ۷۶۷\nافشار\nمحمد درخشان\n09147550436
+                                            r"(.*?)(?:\n(?:مدل|سال)\s*(\d{4}(?:\.\d+)?)?)?(?:\n.*)*?\n(?:فی|قیمت|بروییت)[:\s]*(\d+[.,/]\d+|\d+)\s*(تومان)?(?:\n.*)*?\n(\d{10,11})?(?:\n(.*))?",
+                                            # فرمت تک‌خطی مثل: پژو 207 پانوراما... - ۱/۱۵۸ - 09121247290 - مهیار پورخدایار
+                                            r"(.*?)(?:\s*(?:مدل|سال)\s*(\d{4}(?:\.\d+)?)?)?\s*[-:]\s*(\d+[,./]\d+|\d+)\s*(تومان)?\s*(?:تماس|شماره)?\s*(\d{10,11})?\s*(.*)?",
+                                            # فرمت ساده‌تر یا بدون مدل
+                                            r"(.*?)\s*(\d+[,./]\d+|\d+)\s*(تومان)?\s*(?:تماس|شماره)?\s*(\d{10,11})?\s*(.*)?",
+                                            # فرمت عمومی برای هر متن حاوی قیمت و شماره تماس
+                                            r"(.*?)\s*(\d+[,./]\d+|\d+)\s*(تومان)?(?:.*?\n)?\s*(\d{10,11})?\s*(.*)?",
+                                        ]
+                                        product_name = None
+                                        price = None
+                                        contact = None
+                                        seller = None
+                                        model_year = None
+                                        details = None
+                                        for pattern in patterns:
+                                            match = re.search(pattern, message.text, re.IGNORECASE | re.MULTILINE)
                                             if match:
                                                 product_name = match.group(1).strip().lower()
-                                                price = int(match.group(2))
-                                            else:
-                                                continue  # پیام بدون فرمت مناسب
+                                                price_str = match.group(2).replace(",", "").replace(".", "").replace("/", "")
+                                                price = int(price_str) * (1000000 if len(price_str) <= 4 else 1)  # تبدیل ۷۶۷ به ۷۶۷,۰۰۰,۰۰۰
+                                                model_year = match.group(2) if match.group(2) else "نامشخص"
+                                                contact = match.group(4) if match.group(4) else ""
+                                                seller = match.group(5).strip() if match.group(5) else ""
+                                                details = message.text  # ذخیره کل پیام برای جزئیات
+                                                logger.info(f"استخراج: {product_name}, {price:,} تومان, مدل: {model_year}, تماس: {contact}, فروشنده: {seller}")
+                                                print(f"استخراج: {product_name}, {price:,} تومان, مدل: {model_year}, تماس: {contact}, فروشنده: {seller}")
+                                                break
 
-                                        # ذخیره محصول و قیمت
-                                        if product_name in PRODUCTS:
-                                            PRODUCTS[product_name].append((price, chat_username))
-                                        else:
-                                            PRODUCTS[product_name] = [(price, chat_username)]
+                                        if product_name and price:
+                                            # پشتیبانی از چندین شماره تماس
+                                            contacts = re.findall(r"\d{10,11}", message.text)
+                                            contact = ", ".join(contacts) if contacts else ""
+                                            PRODUCTS[product_name] = PRODUCTS.get(product_name, []) + [(price, chat_username, contact, seller, model_year, details)]
+                                            c.execute("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", 
+                                                      (product_name, price, chat_username, contact, seller, model_year, details))
+                                            conn.commit()
 
-                                # به‌روزرسانی offset_id برای دسته بعدی
                                 offset_id = messages_list[-1].id if messages_list else 0
-                                await asyncio.sleep(0.5)  # تأخیر برای جلوگیری از محدودیت API
+                                await asyncio.sleep(0.5)
 
-                                # اگر تعداد پیام‌های دریافت‌شده کمتر از batch_size بود، پایان پیام‌ها
                                 if len(messages_list) < batch_size:
                                     break
 
                             except Exception as e:
+                                logger.error(f"خطا در دریافت پیام‌های کانال {chat_username}: {e}")
                                 print(f"خطا در دریافت پیام‌های کانال {chat_username}: {e}")
                                 break
 
+                        logger.info(f"بررسی کانال {chat_username} تمام شد.")
                         print(f"بررسی کانال {chat_username} تمام شد.")
                     except Exception as e:
+                        logger.error(f"خطا در بررسی کانال {chat_username}: {e}")
                         print(f"خطا در بررسی کانال {chat_username}: {e}")
                         continue
         except Exception as e:
+            logger.error(f"خطا در گرفتن چت‌ها: {e}")
             print(f"خطا در گرفتن چت‌ها: {e}")
-        print("بررسی تمام کانال‌ها تمام شد. محصولات یافت‌شده:", PRODUCTS)
+        logger.info(f"بررسی تمام کانال‌ها تمام شد. محصولات یافت‌شده: {PRODUCTS}")
+        print(f"بررسی تمام کانال‌ها تمام شد. محصولات یافت‌شده: {PRODUCTS}")
 
-# تابع برای یافتن کمترین قیمت
+# تابع برای یافتن تمام آگهی‌های مرتبط
 def find_lowest_price(product_name):
     product_name = product_name.lower()
-    if product_name in PRODUCTS:
-        prices = PRODUCTS[product_name]
-        lowest_price, channel = min(prices, key=lambda x: x[0])
-        return f"کمترین قیمت برای {product_name}: ${lowest_price} در {channel}"
-    return f"هیچ قیمتی برای {product_name} یافت نشد."
+    matching_products = [p for p in PRODUCTS if product_name in p]
+    if not matching_products:
+        # جستجوی گسترده‌تر در جزئیات
+        c.execute("SELECT * FROM products WHERE details LIKE ?", (f"%{product_name}%",))
+        rows = c.fetchall()
+        if rows:
+            matching_products = [row[0] for row in rows]
+            for row in rows:
+                PRODUCTS[row[0]] = PRODUCTS.get(row[0], []) + [(row[1], row[2], row[3], row[4], row[5], row[6])]
+
+    if matching_products:
+        all_prices = []
+        for prod in matching_products:
+            all_prices.extend(PRODUCTS[prod])
+        if all_prices:
+            results = []
+            for price, channel, contact, seller, model_year, details in sorted(all_prices, key=lambda x: x[0]):
+                response = f"آگهی برای {prod}: {price:,} تومان\nکانال: {channel}\nمدل: {model_year}"
+                if contact:
+                    response += f"\nتماس: {contact}"
+                if seller:
+                    response += f"\nفروشنده: {seller}"
+                if details:
+                    response += f"\nجزئیات: {details[:200]}..." if len(details) > 200 else f"\nجزئیات: {details}"
+                results.append(response)
+            logger.info(f"جستجو برای {product_name}: {len(results)} آگهی یافت شد")
+            return "\n\n".join(results)
+    logger.warning(f"هیچ آگهی برای {product_name} یافت نشد.")
+    return f"هیچ آگهی برای {product_name} یافت نشد."
 
 # هندلر پیام‌های کاربران
 async def handle_message(update, context):
@@ -116,32 +175,42 @@ async def handle_message(update, context):
     response = find_lowest_price(user_query)
     await update.message.reply_text(response)
 
+# هندلر دستور /start
+async def start(update, context):
+    await update.message.reply_text("به ربات جستجوی قیمت خودرو خوش آمدید! نام خودرو یا جزئیات (مثل 'سورن پلاس'، 'وانت پراید'، 'دیگنیتی پرستیژ'، 'سیمی') را وارد کنید.")
+
 # تابع اصلی برای ربات تلگرام
 async def main_telegram_bot():
-    # مقداردهی اولیه ربات
     app = Application.builder().token(BOT_TOKEN).build()
-    
-    # اضافه کردن هندلر برای پیام‌های متنی (به جز دستورات)
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    # شروع ربات
+    logger.info("شروع ربات تلگرام...")
     print("شروع ربات تلگرام...")
     await app.run_polling()
 
 # نقطه ورود اصلی
 async def main():
-    # استفاده از حلقه فعلی asyncio
-    loop = asyncio.get_event_loop()
-    
-    # ابتدا کانال‌ها را بررسی کن
     print("در حال بررسی تمام پیام‌های کانال‌ها...")
-    await scrape_all_channels()
-    
-    # سپس ربات تلگرام را شروع کن
-    await main_telegram_bot()
+    logger.info("شروع بررسی تمام پیام‌های کانال‌ها")
+    while True:
+        PRODUCTS.clear()
+        c.execute("DELETE FROM products")
+        conn.commit()
+        await scrape_all_channels()
+        await asyncio.sleep(3600)  # به‌روزرسانی هر ساعت
+        logger.info("به‌روزرسانی دوره‌ای انجام شد.")
+        print("به‌روزرسانی دوره‌ای انجام شد.")
 
 if __name__ == "__main__":
-    # اطمینان از استفاده از یک حلقه asyncio
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(main())
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        loop.run_until_complete(main())
+    except Exception as e:
+        logger.error(f"خطا در اجرای اصلی: {e}")
+        print(f"خطا در اجرای اصلی: {e}")
+    finally:
+        conn.close()
+        loop.close()
