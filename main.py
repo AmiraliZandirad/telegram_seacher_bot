@@ -8,7 +8,7 @@ api_hash = "1651908df3a7fb05ba65905ae0d32bc0"
 session_name = "car_user"
 bot_token = "8242002160:AAGDtD14wUI4EajkKnBDixqnUwDQXAhBtKE"
 
-AI_API_URL = "https://api.avalai.ir/v1/extract-car-info"  # فرض کردم endpoint به این شکل است، اگر فرق دارد بگو
+AI_API_URL = "https://api.avalai.ir/v1/extract-car-info"
 AI_API_TOKEN = "aa-i65SVPZOrRHLjqR8RhXVRiAu61KD7rbgONplPMxem76igylU"
 
 async def extract_info_with_ai(text: str):
@@ -59,10 +59,11 @@ async def handle_message(client, message):
     await message.reply_text(result)
 
 async def main():
-    async with Client(session_name, api_id=api_id, api_hash=api_hash, bot_token=bot_token) as app:
-        app.add_handler(MessageHandler(handle_message, filters.text & ~filters.command))
-        print("Bot is running...")
-        await app.idle()
+    app = Client(session_name, api_id=api_id, api_hash=api_hash, bot_token=bot_token)
+    await app.start()
+    app.add_handler(MessageHandler(handle_message, filters.text & ~filters.command()))
+    print("✅ ربات با موفقیت اجرا شد.")
+    await app.idle()
 
 if __name__ == "__main__":
     asyncio.run(main())
