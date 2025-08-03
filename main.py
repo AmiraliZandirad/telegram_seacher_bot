@@ -77,15 +77,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # تابع اصلی
 def main():
-    import pytz
-    from apscheduler.schedulers.asyncio import AsyncIOScheduler
-    scheduler = AsyncIOScheduler(timezone=pytz.timezone('Asia/Tehran'))
+    # تنظیم ربات بدون نیاز به job_queue_scheduler
+    application = Application.builder().token(BOT_TOKEN).build()
 
-    application = Application.builder().token(BOT_TOKEN).job_queue_scheduler(scheduler).build()
-
+    # هندلرها
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+    # شروع ربات
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
