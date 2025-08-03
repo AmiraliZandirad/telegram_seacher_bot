@@ -22,13 +22,11 @@ SESSION_NAME = "car_user"
 
 # لیست کانال‌های مشخص‌شده
 TARGET_CHANNELS = [
-    "@ArefzadehSales",
-    "@bolvar_danesh_amoz",
-    "@autobarbodgrop",
-    "@car_ayral",
-    "@autojaloulimohammad",
-    "@khanehyma",
-    "@otogaleryqasemi"
+    "@l1uuheioo",
+    "@akamotorss",
+    "@auto_jomhouri_tehran",
+    "@Autolotfi",
+    "@otogolerivahab1"
 ]
 
 PRODUCTS = {}  # دیکشنری برای ذخیره محصولات و قیمت‌ها
