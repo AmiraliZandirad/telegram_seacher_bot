@@ -31,7 +31,7 @@ conn.commit()
 # مقداردهی اولیه کلاینت Pyrogram
 pyrogram_client = Client(SESSION_NAME, api_id=API_ID, api_hash=API_HASH, workdir=".")
 
-# تابع برای بررسی تمام پیام‌های تمام کانال‌ها
+# تابع برای بررسی 50 پیام آخر هر کانال
 async def scrape_all_channels():
     async with pyrogram_client:
         try:
@@ -51,69 +51,49 @@ async def scrape_all_channels():
                             print(f"نادیده گرفتن کانال نامعتبر: {chat_username}")
                             continue
 
-                        offset_id = 0
-                        batch_size = 100
-                        while True:
-                            try:
-                                messages = await pyrogram_client.get_chat_history(
-                                    chat.id,
-                                    limit=batch_size,
-                                    offset_id=offset_id
-                                )
-                                messages_list = [msg async for msg in messages]
-                                if not messages_list:
-                                    break
+                        # دریافت فقط 50 پیام آخر
+                        messages = await pyrogram_client.get_chat_history(chat.id, limit=50)
+                        messages_list = [msg async for msg in messages]
+                        logger.info(f"تعداد پیام‌های دریافت‌شده از {chat_username}: {len(messages_list)}")
+                        print(f"تعداد پیام‌های دریافت‌شده از {chat_username}: {len(messages_list)}")
 
-                                for message in messages_list:
-                                    if message.text:
-                                        logger.debug(f"پیام در {chat_username}: {message.text[:200]}...")
-                                        print(f"پیام در {chat_username}: {message.text[:200]}...")
-                                        # الگوهای regex ساده‌تر
-                                        patterns = [
-                                            r"(.*?)\s*(?:مدل|سال)?\s*(\d{4})?\s*(?:فی|قیمت|بروییت)[:\s]*(\d+[.,/]\d+|\d+)\s*(تومان)?\s*(?:تماس|شماره)?\s*(\d{10,11})?\s*(.*)?",
-                                            r"(.*?)\s*(\d+[,./]\d+|\d+)\s*(تومان)?\s*(?:تماس|شماره)?\s*(\d{10,11})?\s*(.*)?",
-                                        ]
-                                        product_name = None
-                                        price = None
-                                        contact = None
-                                        seller = None
-                                        model_year = None
-                                        details = None
-                                        for pattern in patterns:
-                                            match = re.search(pattern, message.text, re.IGNORECASE | re.MULTILINE)
-                                            if match:
-                                                product_name = match.group(1).strip().lower()
-                                                price_str = match.group(2).replace(",", "").replace(".", "").replace("/", "")
-                                                price = int(price_str) * (1000000 if len(price_str) <= 4 else 1)
-                                                model_year = match.group(2) if match.group(2) else "نامشخص"
-                                                contact = match.group(4) if match.group(4) else ""
-                                                seller = match.group(5).strip() if match.group(5) else ""
-                                                details = message.text
-                                                logger.info(f"استخراج: {product_name}, {price:,} تومان, مدل: {model_year}, تماس: {contact}, فروشنده: {seller}")
-                                                print(f"استخراج: {product_name}, {price:,} تومان, مدل: {model_year}, تماس: {contact}, فروشنده: {seller}")
-                                                break
+                        for message in messages_list:
+                            if message.text:
+                                logger.debug(f"پیام در {chat_username}: {message.text[:200]}...")
+                                print(f"پیام در {chat_username}: {message.text[:200]}...")
+                                # الگوهای regex برای فرمت پیام‌های نمونه
+                                patterns = [
+                                    r"(.*?)\n.*?مدل\s*(\d{4}|۱\d{3}).*?\n(?:قیمت|فی)[:\s]*(\d+[.,/]?[\d]*)[\s]*(?:تومان)?\n.*?(?:\n(\d{10,11}))?(?:.*?\n(\d{10,11}))?(?:\n(.*))?",
+                                    r"(.*?)\s*(?:مدل|سال)\s*(\d{4}|۱\d{3})?\s*(?:قیمت|فی)[:\s]*(\d+[.,/]?[\d]*)[\s]*(?:تومان)?\s*(?:تماس|شماره)?\s*(\d{10,11})?\s*(.*)?",
+                                ]
+                                product_name = None
+                                price = None
+                                contact = None
+                                seller = None
+                                model_year = None
+                                details = None
+                                for pattern in patterns:
+                                    match = re.search(pattern, message.text, re.IGNORECASE | re.MULTILINE)
+                                    if match:
+                                        product_name = match.group(1).strip().lower()
+                                        price_str = match.group(3).replace(",", "").replace(".", "").replace("/", "")
+                                        price = int(price_str) * (1000000 if len(price_str) <= 4 else 1)
+                                        model_year = match.group(2) if match.group(2) else "نامشخص"
+                                        contact = ", ".join(filter(None, [match.group(4), match.group(5)])) if match.group(4) or match.group(5) else ""
+                                        seller = match.group(6).strip() if match.group(6) else "نامشخص"
+                                        details = message.text
+                                        logger.info(f"استخراج: {product_name}, {price:,} تومان, مدل: {model_year}, تماس: {contact}, فروشنده: {seller}")
+                                        print(f"استخراج: {product_name}, {price:,} تومان, مدل: {model_year}, تماس: {contact}, فروشنده: {seller}")
+                                        break
 
-                                        if product_name and price:
-                                            contacts = re.findall(r"\d{10,11}", message.text)
-                                            contact = ", ".join(contacts) if contacts else ""
-                                            PRODUCTS[product_name] = PRODUCTS.get(product_name, []) + [(price, chat_username, contact, seller, model_year, details)]
-                                            c.execute("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)",
-                                                      (product_name, price, chat_username, contact, seller, model_year, details))
-                                            conn.commit()
+                                if product_name and price:
+                                    contacts = re.findall(r"\d{10,11}", message.text)
+                                    contact = ", ".join(contacts) if contacts else ""
+                                    PRODUCTS[product_name] = PRODUCTS.get(product_name, []) + [(price, chat_username, contact, seller, model_year, details)]
+                                    c.execute("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                              (product_name, price, chat_username, contact, seller, model_year, details))
+                                    conn.commit()
 
-                                offset_id = messages_list[-1].id if messages_list else 0
-                                await asyncio.sleep(1)  # افزایش تأخیر برای جلوگیری از FloodWait
-
-                                if len(messages_list) < batch_size:
-                                    break
-
-                            except Exception as e:
-                                logger.error(f"خطا در دریافت پیام‌های کانال {chat_username}: {e}")
-                                print(f"خطا در دریافت پیام‌های کانال {chat_username}: {e}")
-                                break
-
-                        logger.info(f"بررسی کانال {chat_username} تمام شد.")
-                        print(f"بررسی کانال {chat_username} تمام شد.")
                     except Exception as e:
                         logger.error(f"خطا در بررسی کانال {chat_username}: {e}")
                         print(f"خطا در بررسی کانال {chat_username}: {e}")
@@ -128,12 +108,12 @@ async def scrape_all_channels():
 def find_lowest_price(product_name):
     product_name = product_name.lower().strip()
     matching_products = []
-    
+
     # جستجو در کلیدهای PRODUCTS
     for prod in PRODUCTS:
         if product_name in prod.lower():
             matching_products.append(prod)
-    
+
     # جستجو در پایگاه داده با LIKE
     c.execute("SELECT * FROM products WHERE name LIKE ? OR details LIKE ?", (f"%{product_name}%", f"%{product_name}%"))
     rows = c.fetchall()
@@ -166,12 +146,13 @@ def find_lowest_price(product_name):
 # هندلر پیام‌های کاربران
 async def handle_message(update, context):
     user_query = update.message.text.strip()
+    await update.message.reply_text("لطفا منتظر بمانید...")
     response = find_lowest_price(user_query)
     await update.message.reply_text(response)
 
 # هندلر دستور /start
 async def start(update, context):
-    await update.message.reply_text("به ربات جستجوی قیمت خودرو خوش آمدید! نام خودرو (مثل 'سورن پلاس' یا 'پژو 207') را وارد کنید تا کمترین قیمت را پیدا کنم.")
+    await update.message.reply_text("به ربات جستجوی قیمت خودرو خوش آمدید! نام خودرو (مثل 'تیگو ۸' یا 'دنا') را وارد کنید تا کمترین قیمت را پیدا کنم.")
 
 # تابع اصلی برای ربات تلگرام
 async def main_telegram_bot():
@@ -198,6 +179,9 @@ async def main():
     except KeyboardInterrupt:
         logger.info("برنامه توسط کاربر متوقف شد.")
         print("برنامه توسط کاربر متوقف شد.")
+    except Exception as e:
+        logger.error(f"خطا در اجرای اصلی: {e}")
+        print(f"خطا در اجرای اصلی: {e}")
     finally:
         conn.close()
 
