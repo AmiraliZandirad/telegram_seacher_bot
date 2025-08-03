@@ -8,7 +8,7 @@ api_hash = "1651908df3a7fb05ba65905ae0d32bc0"
 session_name = "car_user"
 bot_token = "8242002160:AAGDtD14wUI4EajkKnBDixqnUwDQXAhBtKE"
 
-AI_API_URL = "https://api.avalai.ir/v1/extract-car-info"
+AI_API_URL = "https://api.avalai.ir/v1/"
 AI_API_TOKEN = "aa-i65SVPZOrRHLjqR8RhXVRiAu61KD7rbgONplPMxem76igylU"
 
 async def extract_info_with_ai(text: str):
