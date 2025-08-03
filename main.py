@@ -56,52 +56,51 @@ async def scrape_target_channels():
                     print(f"در حال بررسی کانال: {chat_username} (ID: {chat.id})")
 
                     # دریافت فقط 50 پیام آخر
-                    messages = pyrogram_client.get_chat_history(chat.id, limit=50)
                     messages_list = []
-                    async for msg in messages:
-                        messages_list.append(msg)
+                    async for msg in pyrogram_client.get_chat_history(chat.id, limit=50):
+                        if msg.text:  # فقط پیام‌هایی که متن دارند
+                            messages_list.append(msg)
                     logger.info(f"تعداد پیام‌های دریافت‌شده از {chat_username}: {len(messages_list)}")
                     print(f"تعداد پیام‌های دریافت‌شده از {chat_username}: {len(messages_list)}")
 
                     for message in messages_list:
-                        if message.text:
-                            logger.debug(f"پیام در {chat_username}: {message.text[:200]}...")
-                            # الگوهای regex برای فرمت‌های مختلف
-                            patterns = [
-                                # فرمت پیام‌های نمونه (مثل دفتر فروش عارف زاده)
-                                r"(.*?)\n.*?مدل\s*(\d{4}|۱\d{3}).*?\n(?:قیمت|فی)[:\s]*(\d+[.,/]?[\d]*)[\s]*(?:تومان)?\n.*?(?:\n(\d{10,11}))?(?:.*?\n(\d{10,11}))?(?:\n(.*))?",
-                                # فرمت عمومی‌تر
-                                r"(.*?)\s*(?:مدل|سال)\s*(\d{4}|۱\d{3})?\s*(?:قیمت|فی)[:\s]*(\d+[.,/]?[\d]*)[\s]*(?:تومان)?\s*(?:تماس|شماره)?\s*(\d{10,11})?\s*(.*)?",
-                                # فرمت ساده بدون مدل
-                                r"(.*?)\s*(?:قیمت|فی)[:\s]*(\d+[.,/]?[\d]*)[\s]*(?:تومان)?\s*(?:تماس|شماره)?\s*(\d{10,11})?\s*(.*)?",
-                            ]
-                            product_name = None
-                            price = None
-                            contact = None
-                            seller = None
-                            model_year = None
-                            details = None
-                            for pattern in patterns:
-                                match = re.search(pattern, message.text, re.IGNORECASE | re.MULTILINE)
-                                if match:
-                                    product_name = match.group(1).strip().lower()
-                                    price_str = match.group(2 if pattern == patterns[2] else 3).replace(",", "").replace(".", "").replace("/", "")
-                                    price = int(price_str) * (1000000 if len(price_str) <= 4 else 1)
-                                    model_year = match.group(2) if match.group(2) else "نامشخص"
-                                    contact = ", ".join(filter(None, [match.group(3 if pattern == patterns[2] else 4), match.group(5)])) if match.group(3 if pattern == patterns[2] else 4) or match.group(5) else ""
-                                    seller = match.group(4 if pattern == patterns[2] else 6).strip() if match.group(4 if pattern == patterns[2] else 6) else "نامشخص"
-                                    details = message.text
-                                    logger.info(f"استخراج: {product_name}, {price:,} تومان, مدل: {model_year}, تماس: {contact}, فروشنده: {seller}")
-                                    print(f"استخراج: {product_name}, {price:,} تومان, مدل: {model_year}, تماس: {contact}, فروشنده: {seller}")
-                                    break
+                        logger.debug(f"پیام در {chat_username}: {message.text[:200]}...")
+                        # الگوهای regex برای فرمت‌های مختلف
+                        patterns = [
+                            # فرمت پیام‌های نمونه (مثل دفتر فروش عارف زاده)
+                            r"(.*?)\n.*?مدل\s*(\d{4}|۱\d{3}).*?\n(?:قیمت|فی|بروییت)[:\s]*(\d+[.,/]?[\d]*)[\s]*(?:تومان)?\n.*?(?:\n(\d{10,11}))?(?:.*?\n(\d{10,11}))?(?:\n(.*))?",
+                            # فرمت عمومی‌تر
+                            r"(.*?)\s*(?:مدل|سال)\s*(\d{4}|۱\d{3})?\s*(?:قیمت|فی|بروییت)[:\s]*(\d+[.,/]?[\d]*)[\s]*(?:تومان)?\s*(?:تماس|شماره)?\s*(\d{10,11})?\s*(.*)?",
+                            # فرمت ساده بدون مدل
+                            r"(.*?)\s*(?:قیمت|فی|بروییت)[:\s]*(\d+[.,/]?[\d]*)[\s]*(?:تومان)?\s*(?:تماس|شماره)?\s*(\d{10,11})?\s*(.*)?",
+                        ]
+                        product_name = None
+                        price = None
+                        contact = None
+                        seller = None
+                        model_year = None
+                        details = None
+                        for pattern in patterns:
+                            match = re.search(pattern, message.text, re.IGNORECASE | re.MULTILINE)
+                            if match:
+                                product_name = match.group(1).strip().lower()
+                                price_str = match.group(2 if pattern == patterns[2] else 3).replace(",", "").replace(".", "").replace("/", "")
+                                price = int(price_str) * (1000000 if len(price_str) <= 4 else 1)
+                                model_year = match.group(2) if match.group(2) and pattern != patterns[2] else "نامشخص"
+                                contact = ", ".join(filter(None, [match.group(3 if pattern == patterns[2] else 4), match.group(5)])) if match.group(3 if pattern == patterns[2] else 4) or match.group(5) else ""
+                                seller = match.group(4 if pattern == patterns[2] else 6).strip() if match.group(4 if pattern == patterns[2] else 6) else "نامشخص"
+                                details = message.text
+                                logger.info(f"استخراج: {product_name}, {price:,} تومان, مدل: {model_year}, تماس: {contact}, فروشنده: {seller}")
+                                print(f"استخراج: {product_name}, {price:,} تومان, مدل: {model_year}, تماس: {contact}, فروشنده: {seller}")
+                                break
 
-                            if product_name and price:
-                                contacts = re.findall(r"\d{10,11}", message.text)
-                                contact = ", ".join(contacts) if contacts else ""
-                                PRODUCTS[product_name] = PRODUCTS.get(product_name, []) + [(price, chat_username, contact, seller, model_year, details)]
-                                c.execute("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)",
-                                          (product_name, price, chat_username, contact, seller, model_year, details))
-                                conn.commit()
+                        if product_name and price:
+                            contacts = re.findall(r"\d{10,11}", message.text)
+                            contact = ", ".join(contacts) if contacts else ""
+                            PRODUCTS[product_name] = PRODUCTS.get(product_name, []) + [(price, chat_username, contact, seller, model_year, details)]
+                            c.execute("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                      (product_name, price, chat_username, contact, seller, model_year, details))
+                            conn.commit()
 
                     await asyncio.sleep(1)  # تأخیر برای جلوگیری از FloodWait
 
