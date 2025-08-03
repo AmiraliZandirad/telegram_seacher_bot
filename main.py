@@ -22,7 +22,7 @@ def call_ai_api(message_text):
     try:
         headers = {"Authorization": f"Bearer {AI_API_TOKEN}"}
         payload = {"text": message_text}
-        response = requests.post(AI_API_URL, json=payload, headers=headers)
+        response = requests.post(AI_API_URL, json=payload, headers=headers, timeout=10)
         response.raise_for_status()
         return response.json()  # فرض می‌کنیم API پاسخ JSON برمی‌گرداند
     except Exception as e:
@@ -32,64 +32,73 @@ def call_ai_api(message_text):
 # تابع برای بررسی تمام پیام‌های تمام کانال‌ها
 async def scrape_all_channels():
     async with pyrogram_client:
-        # گرفتن تمام چت‌ها (کانال‌ها، گروه‌ها، و غیره)
-        async for dialog in pyrogram_client.get_dialogs():
-            chat = dialog.chat
-            # فقط کانال‌ها و سوپردگروه‌ها را بررسی می‌کنیم
-            if chat.type in ["channel", "supergroup"]:
-                chat_username = chat.username if chat.username else chat.title
-                print(f"در حال بررسی کانال: {chat_username}")
-                try:
-                    # گرفتن تعداد کل پیام‌ها
-                    chat_info = await pyrogram_client.get_chat(chat.id)
-                    total_messages = chat_info.messages_count if hasattr(chat_info, 'messages_count') else 1000
-                    offset_id = 0
-                    batch_size = 100  # تعداد پیام‌ها در هر درخواست
+        try:
+            # گرفتن تمام چت‌ها (کانال‌ها، گروه‌ها، و غیره)
+            async for dialog in pyrogram_client.get_dialogs():
+                chat = dialog.chat
+                # فقط کانال‌ها و سوپردگروه‌ها را بررسی می‌کنیم
+                if chat.type in ["channel", "supergroup"]:
+                    chat_username = chat.username if chat.username else chat.title
+                    print(f"در حال بررسی کانال: {chat_username} (ID: {chat.id})")
+                    try:
+                        # گرفتن تعداد کل پیام‌ها
+                        chat_info = await pyrogram_client.get_chat(chat.id)
+                        total_messages = chat_info.messages_count if hasattr(chat_info, 'messages_count') else 1000
+                        offset_id = 0
+                        batch_size = 100  # تعداد پیام‌ها در هر درخواست
 
-                    while True:
-                        # گرفتن پیام‌ها به‌صورت دسته‌ای
-                        messages = await pyrogram_client.get_chat_history(
-                            chat.id, 
-                            limit=batch_size, 
-                            offset_id=offset_id
-                        )
-                        messages_list = [msg async for msg in messages]
-                        if not messages_list:
-                            break  # اگر پیام بیشتری نبود، حلقه را بشکن
+                        while True:
+                            try:
+                                # گرفتن پیام‌ها به‌صورت دسته‌ای
+                                messages = await pyrogram_client.get_chat_history(
+                                    chat.id, 
+                                    limit=batch_size, 
+                                    offset_id=offset_id
+                                )
+                                messages_list = [msg async for msg in messages]
+                                if not messages_list:
+                                    break  # اگر پیام بیشتری نبود، حلقه را بشکن
 
-                        for message in messages_list:
-                            if message.text:
-                                # فراخوانی API برای پردازش پیام (اختیاری)
-                                ai_response = call_ai_api(message.text)
-                                if ai_response and "product" in ai_response and "price" in ai_response:
-                                    product_name = ai_response["product"].strip().lower()
-                                    price = int(ai_response["price"])
-                                else:
-                                    # اگر API پاسخ نداد، از regex استفاده کن
-                                    match = re.search(r"Product: (.*?),\s*Price: \$(\d+)", message.text, re.IGNORECASE)
-                                    if match:
-                                        product_name = match.group(1).strip().lower()
-                                        price = int(match.group(2))
-                                    else:
-                                        continue  # پیام بدون فرمت مناسب
+                                for message in messages_list:
+                                    if message.text:
+                                        # فراخوانی API برای پردازش پیام (اختیاری)
+                                        ai_response = call_ai_api(message.text)
+                                        if ai_response and "product" in ai_response and "price" in ai_response:
+                                            product_name = ai_response["product"].strip().lower()
+                                            price = int(ai_response["price"])
+                                        else:
+                                            # اگر API پاسخ نداد، از regex استفاده کن
+                                            match = re.search(r"Product: (.*?),\s*Price: \$(\d+)", message.text, re.IGNORECASE)
+                                            if match:
+                                                product_name = match.group(1).strip().lower()
+                                                price = int(match.group(2))
+                                            else:
+                                                continue  # پیام بدون فرمت مناسب
 
-                                # ذخیره محصول و قیمت
-                                if product_name in PRODUCTS:
-                                    PRODUCTS[product_name].append((price, chat_username))
-                                else:
-                                    PRODUCTS[product_name] = [(price, chat_username)]
+                                        # ذخیره محصول و قیمت
+                                        if product_name in PRODUCTS:
+                                            PRODUCTS[product_name].append((price, chat_username))
+                                        else:
+                                            PRODUCTS[product_name] = [(price, chat_username)]
 
-                        # به‌روزرسانی offset_id برای دسته بعدی
-                        offset_id = messages_list[-1].id if messages_list else 0
-                        await asyncio.sleep(0.5)  # تأخیر برای جلوگیری از محدودیت API
+                                # به‌روزرسانی offset_id برای دسته بعدی
+                                offset_id = messages_list[-1].id if messages_list else 0
+                                await asyncio.sleep(0.5)  # تأخیر برای جلوگیری از محدودیت API
 
-                        # اگر تعداد پیام‌های دریافت‌شده کمتر از batch_size بود، پایان پیام‌ها
-                        if len(messages_list) < batch_size:
-                            break
+                                # اگر تعداد پیام‌های دریافت‌شده کمتر از batch_size بود، پایان پیام‌ها
+                                if len(messages_list) < batch_size:
+                                    break
 
-                    print(f"بررسی کانال {chat_username} تمام شد.")
-                except Exception as e:
-                    print(f"خطا در بررسی کانال {chat_username}: {e}")
+                            except Exception as e:
+                                print(f"خطا در دریافت پیام‌های کانال {chat_username}: {e}")
+                                break
+
+                        print(f"بررسی کانال {chat_username} تمام شد.")
+                    except Exception as e:
+                        print(f"خطا در بررسی کانال {chat_username}: {e}")
+                        continue
+        except Exception as e:
+            print(f"خطا در گرفتن چت‌ها: {e}")
         print("بررسی تمام کانال‌ها تمام شد. محصولات یافت‌شده:", PRODUCTS)
 
 # تابع برای یافتن کمترین قیمت
@@ -121,6 +130,9 @@ async def main_telegram_bot():
 
 # نقطه ورود اصلی
 async def main():
+    # استفاده از حلقه فعلی asyncio
+    loop = asyncio.get_event_loop()
+    
     # ابتدا کانال‌ها را بررسی کن
     print("در حال بررسی تمام پیام‌های کانال‌ها...")
     await scrape_all_channels()
@@ -129,4 +141,7 @@ async def main():
     await main_telegram_bot()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # اطمینان از استفاده از یک حلقه asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(main())
